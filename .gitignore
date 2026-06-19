@@ -1,0 +1,16 @@
+# secrets
+.env
+*.env
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# pipeline artifacts
+code/.cache/
+output.csv
+
+# os
+.DS_Store
