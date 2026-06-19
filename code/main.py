@@ -18,7 +18,7 @@ def main() -> int:
     ap.add_argument("--claims", default=str(SETTINGS.test_csv), help="input claims CSV")
     ap.add_argument("--out", default=str(SETTINGS.dataset_dir.parent / "output.csv"),
                     help="output CSV path (default: repo-root/output.csv)")
-    ap.add_argument("--variant", choices=["full", "lean"], default="full")
+    ap.add_argument("--variant", choices=["full", "full_rf", "base", "lean"], default="full")
     ap.add_argument("--fewshot", action="store_true", help="prepend few-shot exemplars (recommended)")
     ap.add_argument("--limit", type=int, default=0, help="only process first N claims")
     ap.add_argument("--workers", type=int, default=SETTINGS.max_workers)

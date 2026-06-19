@@ -298,9 +298,112 @@ Return ONLY this JSON object (no markdown, no extra keys):
 }
 Do NOT include user_history_risk or manual_review_required — the pipeline adds those."""
 
+_OUTPUT_SPEC_REASON_FIRST = """\
+Think first, then answer. Return ONLY this JSON object (no markdown, no extra keys),
+with the keys in EXACTLY this order so your reasoning precedes your scored answers:
+{
+  "reasoning": "<2-3 short sentences: per image, what is visible on the claimed part; whether images show the same object; how the visible damage compares to the claim. Reason here BEFORE committing to the fields below.>",
+  "evidence_standard_met_reason": "<short English reason tied to what the image shows vs the rule>",
+  "claim_status_justification": "<concise, image-grounded English; cite image IDs when helpful>",
+  "evidence_standard_met": true | false,
+  "claim_status": "supported | contradicted | not_enough_information",
+  "issue_type": "<one allowed issue_type>",
+  "object_part": "<closest allowed object_part for this object, or unknown>",
+  "severity": "none | low | medium | high | unknown",
+  "valid_image": true | false,
+  "supporting_image_ids": ["<image IDs that evidence the decision, e.g. img_2; empty array if none>"],
+  "visual_risk_flags": ["<zero or more of: blurry_image, cropped_or_obstructed, low_light_or_glare, wrong_angle, wrong_object, wrong_object_part, damage_not_visible, claim_mismatch, possible_manipulation, non_original_image, text_instruction_present>"]
+}
+Do NOT include user_history_risk or manual_review_required — the pipeline adds those."""
+
+
+_PATCH_REVERTS = [
+    (
+        """A NON-ORIGINAL OR FLAGGED IMAGE IS STILL EVIDENCE — IT DOES NOT FORCE not_enough_information. \
+If an image is non-original (stock/watermarked) or otherwise flagged but you can still SEE \
+what it depicts, judge the claim from what is visible: if it shows the claimed part with the \
+claimed damage -> supported; if it shows something inconsistent with the claim (wrong damage, \
+wrong/severe-vs-mild, a different object) -> contradicted (still set the relevant flag like \
+non_original_image). Choose not_enough_information ONLY when the claimed part genuinely cannot \
+be assessed in ANY image — never merely because an image is non-original, mismatched, or \
+suspicious. (Example pattern: a stock photo of a wrecked car submitted for a "minor hood \
+scratch" claim is CONTRADICTED, not NEI — the visible severe damage disproves the claim.)
+""",
+        "",
+    ),
+    (
+        """A damaged side_mirror/headlight/hinge is broken_part, NEVER glass_shatter. \
+CLASSIFY BY THE STATE OF THE COMPONENT, not the visual texture of the damage: first decide \
+"is the whole discrete component compromised, or is this just a line on an otherwise intact \
+continuous surface?" When a discrete component (side mirror, lamp/lens, bumper, trim, hinge, \
+or a small glass element like a mirror face) is fractured into multiple pieces, shattered, \
+spider-webbed across the whole element, punctured, detached, or missing material, it is \
+broken_part — even if individual fracture lines are visible. A shattered side-mirror glass \
+face is broken_part (high), not crack and not glass_shatter.
+- crack = a localized fissure or chip on an otherwise intact, structurally CONTINUOUS surface \
+where NO piece has separated and the part still functions (a windshield crack, a cracked \
+laptop screen). This is the COMMON glass/screen case — prefer crack. If fractures radiate \
+across an entire small element or it is in pieces, it is broken_part, not crack.""",
+        """A damaged side_mirror/headlight/hinge is broken_part, NEVER glass_shatter.
+- crack = a fracture LINE or chip on glass/screen/plastic (a windshield crack, a cracked \
+laptop screen). This is the COMMON glass/screen case — prefer crack.""",
+    ),
+    (
+        """- high: RARE — RESERVED for severe/structural/multi-area destruction. Assign high ONLY when \
+you can point to one of these objective, countable cues: (a) a body panel or bumper cover is \
+torn, detached, missing, or ripped open; (b) bare structural metal / reinforcement bar / \
+underlying frame is exposed; (c) deformation/crumpling spans TWO OR MORE adjacent panels or \
+the full width of one end of the vehicle; (d) glass is shattered/fragmented across the \
+MAJORITY of a panel; (e) damage extends beyond the part into the chassis/frame. If you cannot \
+name such a cue, the answer is medium, not high. A single impact site — even with dramatic \
+spider-web/radiating cracks — is MEDIUM (spider-webbing from ONE point is still one crack). A \
+single heavily crumpled bumper/panel that is still attached is MEDIUM. Do NOT escalate to \
+high based on how visually striking, gritty, or dark the photo looks, or on the claim's \
+wording; count discrete damaged regions and judge the fraction of surface affected.""",
+        """- high: severe/structural/multi-area — a smashed front end with exposed components, \
+glass shattered across a panel, deep multi-panel deformation, total crush.""",
+    ),
+    (
+        """- non_original_image: set ONLY when you can point to a CONCRETE, NAMEABLE provenance \
+artifact actually visible in the pixels, and you NAME it in your justification. Qualifying \
+markers, and ONLY these: (a) a stock/agency watermark or tiled/repeating logo or text \
+overlay (e.g. Shutterstock, Getty, Alamy, iStock, 123RF, Dreamstime, Vecteezy, Adobe Stock, \
+or a "© ..." / photographer / embedded-URL overlay); (b) application/marketplace/listing UI \
+chrome composited onto the frame (buttons, search bars, navigation, price tags, add-to-cart, \
+captions); (c) screenshot framing (a phone status bar, browser/OS window chrome, or a device \
+bezel around the whole frame); or (d) unmistakable AI-generation / rendered-catalog artifacts \
+(impossible geometry, melted/garbled text, plastic CGI uniformity, a rendered logo/SKU). \
+DO NOT infer non_original_image from aesthetics or quality. A photo is STILL ORIGINAL even if \
+it is clean, sharp, well-lit, professionally composed, glossy, "lifestyle"-styled, shot on a \
+seamless/neutral studio backdrop with a soft shadow, macro/close-up, or in a wide/cropped \
+aspect ratio; and conversely a blurry, dark, or oddly framed photo is still original. An \
+undamaged, pristine, or unexpected subject is NOT a non-original cue. If you cannot name the \
+exact marker (and roughly where it is in the frame), DO NOT set the flag — default to a \
+genuine original photo. When set, valid_image must be false; if you cannot justify the flag, \
+do not set it and keep valid_image=true. A subject that merely differs from the claim or from \
+another image is a vehicle/object mismatch (use wrong_object + claim_mismatch), NOT \
+non_original_image, and does not by itself make valid_image false.""",
+        """- non_original_image: stock/vendor watermarks (Vecteezy, Shutterstock, Getty, Alamy, \
+iStock, 123RF, Dreamstime, tiled repeating watermark text), obvious screenshots of a \
+listing/app UI, or template/catalog imagery. When set, valid_image must be false.""",
+    ),
+]
+
+
+def build_system_prompt(variant: str) -> str:
+    if variant == "lean":
+        return SYSTEM_PROMPT_LEAN
+    if variant == "base":
+        s = SYSTEM_PROMPT_FULL
+        for patched, original in _PATCH_REVERTS:
+            assert patched in s, "patch-revert text drifted; update _PATCH_REVERTS"
+            s = s.replace(patched, original)
+        return s
+    return SYSTEM_PROMPT_FULL
+
 
 def build_messages(claim: Claim, variant: str = "full", fewshot: bool = False) -> tuple[str, list[dict]]:
-    system = SYSTEM_PROMPT_FULL if variant == "full" else SYSTEM_PROMPT_LEAN
+    system = build_system_prompt(variant)
 
     content: list[dict] = []
     if fewshot:
@@ -333,7 +436,7 @@ def build_messages(claim: Claim, variant: str = "full", fewshot: bool = False) -
         "USER HISTORY (RISK CONTEXT ONLY — must NOT by itself change any visual judgment):",
         _history_summary(claim),
         "",
-        _OUTPUT_SPEC,
+        _OUTPUT_SPEC_REASON_FIRST if variant == "full_rf" else _OUTPUT_SPEC,
     ]
     content.append({"type": "text", "text": "\n".join(parts)})
     return system, content

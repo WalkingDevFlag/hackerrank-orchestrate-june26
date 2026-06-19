@@ -144,3 +144,55 @@ python code/evaluation/main.py --compare --report code/evaluation/compare.md
 # Produce final predictions
 python code/main.py --out output.csv
 ```
+
+## 6. Accuracy-push investigation (model matrix, instrumentation, ablations)
+
+A follow-up effort tried to push past 85% and validated the system against newer
+models, the literature, and statistical rigor. See `research_findings.md` for the
+full write-up. Key outcomes:
+
+**Model × prompt matrix (20 samples, claim_status% / key-field%):**
+
+| Model | lean | base (unpatched) | full (patched) |
+|---|---|---|---|
+| Sonnet 4.6 | 70 / 70.8 | 85 / 74.2 | 75 / 72.5 |
+| Opus 4.8 | 75 / 77.5 | 80 / 76.7 | 80 / 79.2 |
+| **Opus 4.5 (final)** | — | — | **85 / 84.2** |
+
+Opus 4.5 + patched remains best; the patches are tuned to it and do not transfer to
+Sonnet 4.6 (they regress it). Opus 4.8 forbids the `temperature` param (handled in the
+client) and was lower/noisier. No model switch warranted.
+
+**Instrumentation added (zero model calls — runs on cached predictions):**
+- Per-flag precision/recall/F1 for `risk_flags`, splitting the model-emitted VISUAL
+  flags from the code-derived history flags, with support counts (`metrics.per_flag_f1`).
+  This localized the `risk_flags` miss: `user_history_risk` is perfect (1.0/1.0), while
+  `manual_review_required` over-fires (P≈0.57) because the model over-emits
+  `wrong_object`/`non_original_image` which the MRR predicate escalates. Note: MRR
+  over-firing is the operationally *safe* error direction (extra human review), so it is
+  intentionally not suppressed.
+- Bootstrap 90% CIs + leave-one-out (`metrics.stability`). On n=20 the claim_status CI is
+  ≈ **±12%** — so 85% and any ≤1-row change are within noise. `--compare` is now
+  regression-guarded: it refuses to crown a winner whose CI overlaps the runner-up.
+
+**Ablations (all within-noise; none shipped):**
+- Few-shot exemplars: no gain, 2× tokens (earlier finding).
+- Reason-before-answer JSON reorder (`--variant full_rf`): 81.7 / 80 vs 84.2 / 85 —
+  no improvement; kept as a selectable variant but not the default.
+
+**Tool-use decision:** do NOT convert the single call into a Bedrock Converse
+tool-calling agent — it breaks the deterministic cache/reproducibility the spec rewards
+for ≈0 expected gain. The only tool-flavored ideas worth future testing are deterministic
+local preprocessing fed in as *data* (OCR for injection hardening; claimed-region crop for
+fine detail on hi-res images), keeping one cached call.
+
+**Conclusion:** 85% / 84.2% is at the practical ceiling for this 20-label dev set. Our
+severity (80%) and claim_status (85%) exceed the published INS-MMBench frontier-VLM
+numbers (~30% severity, ~83% damage judgment), and the 3 remaining misses are contested
+labels. Further prompt-fitting would overfit n=20, not improve the hidden 44-row test set.
+
+**New commands:**
+```bash
+python code/evaluation/main.py --variant full --diagnostics      # per-flag F1 + CIs
+python code/evaluation/main.py --compare full base lean          # regression-guarded
+```

@@ -106,10 +106,11 @@ class BedrockVLM:
         body = {
             "anthropic_version": "bedrock-2023-05-31",
             "max_tokens": self.s.max_tokens,
-            "temperature": self.s.temperature,
             "system": system,
             "messages": [{"role": "user", "content": content_blocks}],
         }
+        if "opus-4-8" not in self.s.model_id:
+            body["temperature"] = self.s.temperature
         last_err: Exception | None = None
         for attempt in range(self.s.max_retries):
             try:

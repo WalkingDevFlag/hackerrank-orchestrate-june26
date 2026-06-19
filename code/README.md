@@ -58,8 +58,14 @@ python code/main.py
 # Evaluate on the 20 labeled samples (with expected answers)
 python code/evaluation/main.py --variant full
 
-# Compare two prompt configurations (full vs lean) for the report
-python code/evaluation/main.py --compare --report code/evaluation/evaluation_report.md
+# Evaluate with diagnostics: per-flag precision/recall/F1 + bootstrap 90% CIs
+python code/evaluation/main.py --variant full --diagnostics
+
+# Compare prompt variants (regression-guarded: refuses CI-overlapping winners)
+python code/evaluation/main.py --compare full base lean
+
+# Prompt variants: full (patched, default) | full_rf (reason-first JSON) | base (unpatched) | lean
+python code/evaluation/main.py --variant full_rf --diagnostics
 
 # Offline plumbing test — no Bedrock/creds needed (mock model)
 ORCH_MOCK=1 python code/main.py --out /tmp/out.csv
