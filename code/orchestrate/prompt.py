@@ -390,16 +390,31 @@ listing/app UI, or template/catalog imagery. When set, valid_image must be false
 ]
 
 
+def _extra_rules() -> str:
+    import os
+    path = os.environ.get("ORCH_EXTRA_RULES_FILE", "")
+    if not path or not os.path.exists(path):
+        return ""
+    try:
+        txt = open(path, encoding="utf-8").read().strip()
+    except Exception:
+        return ""
+    if not txt:
+        return ""
+    return ("\n\n=== ADDITIONAL CALIBRATION RULES (apply consistently; do not override the "
+            "principles above) ===\n" + txt)
+
+
 def build_system_prompt(variant: str) -> str:
     if variant == "lean":
-        return SYSTEM_PROMPT_LEAN
+        return SYSTEM_PROMPT_LEAN + _extra_rules()
     if variant == "base":
         s = SYSTEM_PROMPT_FULL
         for patched, original in _PATCH_REVERTS:
             assert patched in s, "patch-revert text drifted; update _PATCH_REVERTS"
             s = s.replace(patched, original)
-        return s
-    return SYSTEM_PROMPT_FULL
+        return s + _extra_rules()
+    return SYSTEM_PROMPT_FULL + _extra_rules()
 
 
 def build_messages(claim: Claim, variant: str = "full", fewshot: bool = False) -> tuple[str, list[dict]]:

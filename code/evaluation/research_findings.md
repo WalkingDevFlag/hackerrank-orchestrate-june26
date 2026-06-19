@@ -103,3 +103,25 @@ instrument before optimizing; accept a change only if a field improves with **no
 field regressing **and** it clears the CI / a ≥2-row bar. The real generalization
 target is the 44-row test set (more multi-image & hi-res than dev), so prefer
 structurally-general changes over dev-score chasing.
+
+## Q6 — Automated hill-climb (stateful keep/drop loop)
+
+A `code/evaluation/improve_loop.js` workflow was built to iteratively (1) propose a
+GENERAL calibration rule (vision-grounded), (2) inject it via `ORCH_EXTRA_RULES_FILE`
+and score live on the 20 samples, (3) apply a **strict gate** — keep only if it adds
+≥2 correct key-fields with **zero** field regressions, passes an overfit-critic, and the
+gain holds on a fresh no-cache re-run — else revert; loop until 3 consecutive rejects.
+
+**Result: 0 of 3 candidates accepted; final score unchanged (101/120, claim_status 85%).**
+The loop targeted the weakest field (`valid_image`, 15/20) three principled ways; each
+either regressed other fields or gained <2 net. Iteration 2 gained 1 field but broke 2,
+so the no-regression guard correctly rejected it. This **empirically confirms the system
+is at its practical ceiling** on this 20-label set: further prompt edits trade one field
+for another rather than improving generalization. A greedy "any-increase" loop would have
+shipped the iteration-2 candidate (a net-worse system); the strict gate prevented that.
+
+Run it yourself:
+```bash
+# Workflow (needs the orchestration harness); scores each candidate via:
+python code/evaluation/score_json.py full     # prints SCORE_JSON with per-field counts
+```
